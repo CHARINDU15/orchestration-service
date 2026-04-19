@@ -167,6 +167,8 @@ app.use('/api/consignments', require('./routes/arrival'));
 app.use('/api/items', require('./routes/items'));
 app.use('/api', require('./routes/accessLinks'));
 app.use('/api', require('./routes/otp'));
+app.use('/api', require('./routes/locations'));
+app.use('/api', require('./routes/deliveryOptions'));
 
 
 // 404 Handler

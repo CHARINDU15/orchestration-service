@@ -5,6 +5,7 @@ const { StatusCodes } = require('http-status-codes');
 const pino = require('pino');
 const db = require('../../config/database');
 const { notifyAccessLink } = require('../services/notificationService');
+const { calculateDeliveryOptionsUntil } = require('../utils/holidayCalendar');
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -69,6 +70,66 @@ const getEndOfDay = (date) => {
 const resolveCreatedBy = (user) => {
   return user?.client_id || user?.clientId || user?.userId || user?.sub || 'SYSTEM';
 };
+
+const verifyAccessLinkToken = (token, secret) => {
+  if (!token) {
+    return { status: StatusCodes.BAD_REQUEST, error: 'token is required' };
+  }
+
+  if (!secret) {
+    return { status: StatusCodes.INTERNAL_SERVER_ERROR, error: 'ACCESS_LINK_SECRET is not configured' };
+  }
+
+  const parts = token.split('.');
+  if (parts.length !== 2) {
+    return { status: StatusCodes.UNAUTHORIZED, error: 'Invalid token' };
+  }
+
+  const [payloadEncoded, signature] = parts;
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(payloadEncoded)
+    .digest('base64url');
+
+  if (signature.length !== expectedSignature.length) {
+    return { status: StatusCodes.UNAUTHORIZED, error: 'Invalid token signature' };
+  }
+
+  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    return { status: StatusCodes.UNAUTHORIZED, error: 'Invalid token signature' };
+  }
+
+  const payloadJson = Buffer.from(payloadEncoded, 'base64url').toString('utf8');
+  const payload = JSON.parse(payloadJson);
+
+  if (!payload?.shipmentId || !payload?.exp) {
+    return { status: StatusCodes.UNAUTHORIZED, error: 'Invalid token payload' };
+  }
+
+  if (payload.exp < Math.floor(Date.now() / 1000)) {
+    return { status: StatusCodes.UNAUTHORIZED, error: 'Token expired' };
+  }
+
+  return { payload };
+};
+
+const buildAccessLinkResponse = (accessLink) => {
+  if (!accessLink) return null;
+
+  return {
+    id: accessLink.id,
+    shipmentId: accessLink.consignment_id,
+    accessUrl: accessLink.access_url,
+    webUrl: accessLink.web_url,
+    urlKey: accessLink.url_key,
+    expiresAt: accessLink.expires_at,
+    deliveryDate: accessLink.delivery_date,
+    status: accessLink.status,
+    createdAt: accessLink.created_at,
+    createdBy: accessLink.created_by
+  };
+};
+
 
 exports.createAccessLink = async (req, res, next) => {
   try {
@@ -213,65 +274,16 @@ exports.validateAccessLink = async (req, res, next) => {
     await ensureAccessLinksTable();
 
     const token = req.query.token;
-    if (!token) {
-      return res.status(StatusCodes.BAD_REQUEST).json({
-        success: false,
-        error: 'token is required'
-      });
-    }
-
     const secret = process.env.ACCESS_LINK_SECRET;
-    if (!secret) {
-      return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+    const verification = verifyAccessLinkToken(token, secret);
+    if (verification.error) {
+      return res.status(verification.status).json({
         success: false,
-        error: 'ACCESS_LINK_SECRET is not configured'
+        error: verification.error
       });
     }
 
-    const parts = token.split('.');
-    if (parts.length !== 2) {
-      return res.status(StatusCodes.UNAUTHORIZED).json({
-        success: false,
-        error: 'Invalid token'
-      });
-    }
-
-    const [payloadEncoded, signature] = parts;
-    const expectedSignature = crypto
-      .createHmac('sha256', secret)
-      .update(payloadEncoded)
-      .digest('base64url');
-
-    if (signature.length !== expectedSignature.length) {
-      return res.status(StatusCodes.UNAUTHORIZED).json({
-        success: false,
-        error: 'Invalid token signature'
-      });
-    }
-
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-      return res.status(StatusCodes.UNAUTHORIZED).json({
-        success: false,
-        error: 'Invalid token signature'
-      });
-    }
-
-    const payloadJson = Buffer.from(payloadEncoded, 'base64url').toString('utf8');
-    const payload = JSON.parse(payloadJson);
-
-    if (!payload?.shipmentId || !payload?.exp) {
-      return res.status(StatusCodes.UNAUTHORIZED).json({
-        success: false,
-        error: 'Invalid token payload'
-      });
-    }
-
-    if (payload.exp < Math.floor(Date.now() / 1000)) {
-      return res.status(StatusCodes.UNAUTHORIZED).json({
-        success: false,
-        error: 'Token expired'
-      });
-    }
+    const payload = verification.payload;
 
     const tokenHash = hashToken(token);
     const accessLink = await db('access_links')
@@ -291,6 +303,83 @@ exports.validateAccessLink = async (req, res, next) => {
         shipmentId: payload.shipmentId,
         expiresAt: accessLink.expires_at,
         webUrl: accessLink.web_url
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.getAccessLinkDetails = async (req, res, next) => {
+  try {
+    await ensureAccessLinksTable();
+
+    const token = req.query.token;
+    const secret = process.env.ACCESS_LINK_SECRET;
+    const verification = verifyAccessLinkToken(token, secret);
+    if (verification.error) {
+      return res.status(verification.status).json({
+        success: false,
+        error: verification.error
+      });
+    }
+
+    const tokenHash = hashToken(token);
+    const accessLink = await db('access_links')
+      .where('token_hash', tokenHash)
+      .first();
+
+    if (!accessLink || accessLink.status !== 'ACTIVE') {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Access link not found or revoked'
+      });
+    }
+
+    const shipmentId = accessLink.consignment_id;
+    if (verification.payload?.shipmentId && verification.payload.shipmentId !== shipmentId) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Access link token mismatch'
+      });
+    }
+
+    const consignment = await db('consignments')
+      .where('consignment_id', shipmentId)
+      .first();
+
+    if (!consignment) {
+      return res.status(StatusCodes.NOT_FOUND).json({
+        success: false,
+        error: 'Consignment not found'
+      });
+    }
+
+    const items = await db('items')
+      .where('consignment_id', consignment.id)
+      .orderBy('id', 'asc');
+
+    const deliveryOptions = await db('delivery_options')
+      .where('consignment_id', consignment.id)
+      .orderBy('id', 'asc');
+
+    const account = consignment.account_id
+      ? await db('accounts').where('id', consignment.account_id).first()
+      : null;
+
+    const deliveryDateValue = consignment.delivery_date || accessLink.delivery_date;
+    const deliveryOptionsUntil = await calculateDeliveryOptionsUntil(deliveryDateValue);
+
+    return res.status(StatusCodes.OK).json({
+      success: true,
+      data: {
+        shipmentId,
+        deliveryOptionsUntil,
+        accessLink: buildAccessLinkResponse(accessLink),
+        consignment,
+        items,
+        deliveryOptions,
+        account
       }
     });
   } catch (error) {

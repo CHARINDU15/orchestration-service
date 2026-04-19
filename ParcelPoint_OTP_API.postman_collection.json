@@ -1,0 +1,378 @@
+{
+  "info": {
+    "name": "ParcelPoint OTP API",
+    "description": "OTP endpoints for shipment access verification",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "otp-api-collection",
+    "version": "1.0.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_link_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3002",
+      "type": "string"
+    },
+    {
+      "key": "access_link_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "shipment_id",
+      "value": "CON-20260208-001",
+      "type": "string"
+    },
+    {
+      "key": "otp_code",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Request OTP (Auto-fetch Email)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Response has success true\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "});",
+              "",
+              "pm.test(\"Response has requestId\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data.requestId).to.exist;",
+              "});",
+              "",
+              "pm.test(\"Channel is EMAIL\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data.channel).to.eql(\"EMAIL\");",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"{{shipment_id}}\",\n  \"channel\": \"EMAIL\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/request",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "request"]
+        },
+        "description": "Request OTP with auto-fetch of email from database"
+      },
+      "response": []
+    },
+    {
+      "name": "2. Request OTP (SMS)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"Channel is SMS\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data.channel).to.eql(\"SMS\");",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"{{shipment_id}}\",\n  \"channel\": \"SMS\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/request",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "request"]
+        },
+        "description": "Request OTP via SMS with auto-fetch from database"
+      },
+      "response": []
+    },
+    {
+      "name": "3. Request OTP (Custom Email)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"{{shipment_id}}\",\n  \"channel\": \"EMAIL\",\n  \"destination\": \"custom@example.com\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/request",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "request"]
+        },
+        "description": "Request OTP with custom destination email"
+      },
+      "response": []
+    },
+    {
+      "name": "4. Verify OTP (Valid)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test(\"OTP verified successfully\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "    pm.expect(jsonData.data.verified).to.eql(true);",
+              "});",
+              "",
+              "pm.test(\"Access token returned\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data.accessToken).to.exist;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"{{shipment_id}}\",\n  \"otp\": \"{{otp_code}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/verify",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "verify"]
+        },
+        "description": "Verify OTP code (enter the code received via email/SMS)"
+      },
+      "response": []
+    },
+    {
+      "name": "5. Verify OTP (Invalid - Test Attempts)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 401\", function () {",
+              "    pm.response.to.have.status(401);",
+              "});",
+              "",
+              "pm.test(\"Error code is INVALID_OTP\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.code).to.eql(\"INVALID_OTP\");",
+              "});",
+              "",
+              "pm.test(\"Attempts remaining shown\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.attemptsRemaining).to.exist;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"{{shipment_id}}\",\n  \"otp\": \"999999\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/verify",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "verify"]
+        },
+        "description": "Test invalid OTP verification - should decrement attempts"
+      },
+      "response": []
+    },
+    {
+      "name": "6. Request OTP (Missing Token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 401\", function () {",
+              "    pm.response.to.have.status(401);",
+              "});",
+              "",
+              "pm.test(\"Error code is MISSING_TOKEN\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.code).to.eql(\"MISSING_TOKEN\");",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"{{shipment_id}}\",\n  \"channel\": \"EMAIL\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/request",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "request"]
+        },
+        "description": "Test missing Authorization header"
+      },
+      "response": []
+    },
+    {
+      "name": "7. Request OTP (Invalid Shipment)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 404\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});",
+              "",
+              "pm.test(\"Error code is NOT_FOUND\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.code).to.eql(\"NOT_FOUND\");",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"INVALID-SHIPMENT-ID\",\n  \"channel\": \"EMAIL\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/request",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "request"]
+        },
+        "description": "Test with non-existent shipment ID"
+      },
+      "response": []
+    },
+    {
+      "name": "8. Verify OTP (Validation Error)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 400\", function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "",
+              "pm.test(\"Validation error returned\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error).to.eql(\"Validation failed\");",
+              "    pm.expect(jsonData.details).to.exist;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"shipmentId\": \"{{shipment_id}}\",\n  \"otp\": \"12345\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/otp/verify",
+          "host": ["{{base_url}}"],
+          "path": ["api", "otp", "verify"]
+        },
+        "description": "Test with invalid OTP format (only 5 digits)"
+      },
+      "response": []
+    }
+  ]
+}

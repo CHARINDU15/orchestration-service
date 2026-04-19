@@ -160,8 +160,46 @@ const notifyOtpAlert = async (payload, authHeader) => {
   }
 };
 
+/**
+ * Send delivery option change email via notification-service
+ */
+const notifyDeliveryOptionChange = async (payload, authHeader) => {
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+
+    const response = await axios.post(
+      `${NOTIFICATION_SERVICE_URL}/api/notifications/delivery-option`,
+      payload,
+      { headers, timeout: 10000 }
+    );
+
+    return {
+      success: true,
+      notificationId: response.data?.data?.notificationId
+    };
+  } catch (error) {
+    logger.error(
+      {
+        error: error.message,
+        status: error.response?.status,
+        shipmentId: payload?.shipmentId
+      },
+      'Failed to trigger delivery option change notification'
+    );
+
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
 module.exports = {
   notifyShipmentArrival,
   notifyAccessLink,
-  notifyOtpAlert
+  notifyOtpAlert,
+  notifyDeliveryOptionChange
 };
