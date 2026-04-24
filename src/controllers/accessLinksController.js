@@ -200,6 +200,19 @@ exports.createAccessLink = async (req, res, next) => {
     const urlKey = crypto.randomBytes(32).toString('base64url');
     const tokenPayload = {
       shipmentId,
+      // embed minimal consignment data so frontend can render without extra API calls
+      consignment: {
+        receiverName: consignment.receiver_contact_name || null,
+        receiverEmail: consignment.receiver_email || null,
+        receiverMobile: consignment.receiver_mobile_number || null,
+        deliveryDate: consignment.delivery_date ? new Date(consignment.delivery_date).toISOString() : null,
+        preferredDeliveryOption: consignment.preferred_delivery_option || null
+      },
+      // include created access link metadata
+      accessMeta: {
+        urlKey,
+        expiresAt: Math.floor(expiresAt.getTime() / 1000)
+      },
       nonce: uuidv4(),
       exp: Math.floor(expiresAt.getTime() / 1000)
     };
@@ -207,13 +220,11 @@ exports.createAccessLink = async (req, res, next) => {
     const token = buildToken(tokenPayload, secret);
     const tokenHash = hashToken(token);
 
-    const baseUrl = value.webUrl || process.env.ACCESS_LINK_BASE_URL || process.env.ACCESS_LINK_WEB_URL;
-    if (!baseUrl) {
-      return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
-        success: false,
-        error: 'ACCESS_LINK_BASE_URL is not configured'
-      });
-    }
+    const baseUrl =
+      value.webUrl ||
+      process.env.ACCESS_LINK_BASE_URL ||
+      process.env.ACCESS_LINK_WEB_URL ||
+      'http://localhost:3000/otppage';
 
     const accessUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
 

@@ -1,5 +1,5 @@
 const express = require('express');
-const { createConsignment } = require('../controllers/consignmentsController');
+const { createConsignment, getConsignmentDetails } = require('../controllers/consignmentsController');
 const { requireAuth } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -35,6 +35,7 @@ const router = express.Router();
  *         description: Consignment already exists
  */
 router.post('/', requireAuth, createConsignment);
+router.get('/:shipmentId/details', getConsignmentDetails);
 
 module.exports = router;
 
