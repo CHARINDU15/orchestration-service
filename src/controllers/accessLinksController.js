@@ -224,7 +224,7 @@ exports.createAccessLink = async (req, res, next) => {
       value.webUrl ||
       process.env.ACCESS_LINK_BASE_URL ||
       process.env.ACCESS_LINK_WEB_URL ||
-      'http://localhost:3000/otppage';
+      'http://localhost:3000';
 
     const accessUrl = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
 

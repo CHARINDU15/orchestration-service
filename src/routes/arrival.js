@@ -124,8 +124,24 @@ const buildOtpPageBaseUrl = () => {
  */
 router.patch('/:shipmentId/arrival', requireAuth, async (req, res, next) => {
   try {
-    const { shipmentId } = req.params;
+    const pathShipmentId = req.params.shipmentId;
+    const bodyShipmentId = req.body?.shipmentId;
+    const shipmentId = bodyShipmentId || pathShipmentId;
     const { messageId, timestamp, shipmentArrival } = req.body;
+
+    if (!shipmentId) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        success: false,
+        error: 'shipmentId is required'
+      });
+    }
+
+    if (bodyShipmentId && pathShipmentId && bodyShipmentId !== pathShipmentId) {
+      logger.warn(
+        { pathShipmentId, bodyShipmentId },
+        'Using shipmentId from arrival body instead of path parameter'
+      );
+    }
 
     // Find consignment
     const consignment = await db('consignments')
