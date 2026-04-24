@@ -3,6 +3,7 @@ const { StatusCodes } = require('http-status-codes');
 const db = require('../../config/database');
 const { notifyShipmentArrival } = require('../services/notificationService');
 const { notifyExternalShipmentArrival } = require('../services/externalApiService');
+const { scheduleCutoffAndInvoiceJobs } = require('../services/notificationJobScheduler');
 const pino = require('pino');
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -268,6 +269,12 @@ exports.createConsignment = async (req, res, next) => {
       }));
 
       await trx('items').insert(items);
+
+      await scheduleCutoffAndInvoiceJobs({
+        id: consignmentId,
+        consignment_id: payload.shipmentId,
+        delivery_date: new Date(payload.deliveryDate)
+      }, false, trx);
 
       return {
         id: consignmentId,

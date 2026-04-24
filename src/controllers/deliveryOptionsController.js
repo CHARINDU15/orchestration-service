@@ -5,6 +5,7 @@ const pino = require('pino');
 const db = require('../../config/database');
 const otpService = require('../services/otpService');
 const { notifyDeliveryOptionChange } = require('../services/notificationService');
+const { scheduleCutoffAndInvoiceJobs } = require('../services/notificationJobScheduler');
 const { calculateDeliveryOptionsUntil, getAvailableDeliveryDates } = require('../utils/holidayCalendar');
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -379,6 +380,16 @@ exports.applyDeliveryOption = async (req, res, next) => {
           collection_date: optionPayload.collection_date,
           created_by: 'customer'
         });
+
+      const updatedDeliveryDate = value.option === 'CHANGE_DELIVERY_DATE'
+        ? optionPayload.delivery_date
+        : consignment.delivery_date;
+
+      await scheduleCutoffAndInvoiceJobs({
+        id: consignment.id,
+        consignment_id: shipmentId,
+        delivery_date: updatedDeliveryDate
+      }, true, trx);
 
       return { existing, current };
     });

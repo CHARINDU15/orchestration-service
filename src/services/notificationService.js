@@ -197,9 +197,85 @@ const notifyDeliveryOptionChange = async (payload, authHeader) => {
   }
 };
 
+/**
+ * Send cutoff reminder email via notification-service
+ */
+const notifyCutoffReminder = async (payload, authHeader) => {
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+
+    const response = await axios.post(
+      `${NOTIFICATION_SERVICE_URL}/api/notifications/cutoff-reminder`,
+      payload,
+      { headers, timeout: 10000 }
+    );
+
+    return {
+      success: true,
+      notificationId: response.data?.data?.notificationId
+    };
+  } catch (error) {
+    logger.error(
+      {
+        error: error.message,
+        status: error.response?.status,
+        shipmentId: payload?.shipmentId
+      },
+      'Failed to trigger cutoff reminder notification'
+    );
+
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+/**
+ * Send invoice email via notification-service
+ */
+const notifyInvoiceReady = async (payload, authHeader) => {
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (authHeader) {
+      headers.Authorization = authHeader;
+    }
+
+    const response = await axios.post(
+      `${NOTIFICATION_SERVICE_URL}/api/notifications/invoice`,
+      payload,
+      { headers, timeout: 10000 }
+    );
+
+    return {
+      success: true,
+      notificationId: response.data?.data?.notificationId
+    };
+  } catch (error) {
+    logger.error(
+      {
+        error: error.message,
+        status: error.response?.status,
+        shipmentId: payload?.shipmentId
+      },
+      'Failed to trigger invoice notification'
+    );
+
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
 module.exports = {
   notifyShipmentArrival,
   notifyAccessLink,
   notifyOtpAlert,
-  notifyDeliveryOptionChange
+  notifyDeliveryOptionChange,
+  notifyCutoffReminder,
+  notifyInvoiceReady
 };

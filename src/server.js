@@ -12,6 +12,8 @@ const promBundle = require('express-prom-bundle');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const { StatusCodes } = require('http-status-codes');
+const { v4: uuidv4 } = require('uuid');
+const { startNotificationJobWorker } = require('./services/notificationJobWorker');
 
 // Logger
 const buildLoggerOptions = () => {
@@ -67,6 +69,15 @@ const swaggerOptions = {
       version: '1.0.0',
       description: 'Main orchestration service for UPS LMS'
     },
+    components: {
+      securitySchemes: {
+        BearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT'
+        }
+      }
+    },
     servers: [
       { url: `http://localhost:${PORT}`, description: 'Development server' }
     ]
@@ -113,8 +124,18 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Request logging
-app.use(pinoHttp({ logger }));
+// Request logging with correlation ID
+app.use(pinoHttp({
+  logger,
+  genReqId: (req) => req.headers['x-request-id'] || req.headers['x-correlation-id'] || uuidv4()
+}));
+
+app.use((req, res, next) => {
+  if (req.id) {
+    res.setHeader('x-request-id', req.id);
+  }
+  next();
+});
 
 // Metrics
 app.use(metricsMiddleware);
@@ -169,6 +190,8 @@ app.use('/api', require('./routes/accessLinks'));
 app.use('/api', require('./routes/otp'));
 app.use('/api', require('./routes/locations'));
 app.use('/api', require('./routes/deliveryOptions'));
+app.use('/api/v1/invoices', require('./routes/invoices'));
+app.use('/api/v1/scheduler', require('./routes/scheduler'));
 
 
 // 404 Handler
@@ -220,6 +243,7 @@ server.listen(PORT, () => {
   logger.info(`Health check: http://localhost:${PORT}/health`);
   logger.info(`API Docs: http://localhost:${PORT}/api-docs`);
   logger.info(`Metrics: http://localhost:${PORT}/metrics`);
+  startNotificationJobWorker();
 });
 
 module.exports = { app, server };
