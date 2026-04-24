@@ -4,9 +4,11 @@ const db = require('../../config/database');
 const { notifyShipmentArrival } = require('../services/notificationService');
 const { notifyExternalShipmentArrival } = require('../services/externalApiService');
 const { scheduleCutoffAndInvoiceJobs } = require('../services/notificationJobScheduler');
+const { calculateDeliveryOptionsUntil } = require('../utils/holidayCalendar');
 const pino = require('pino');
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+const OTP_SESSION_TTL_MINUTES = parseInt(process.env.OTP_SESSION_TTL_MINUTES || '30', 10);
 
 const SRI_LANKA_PROVINCES = ['WP', 'CP', 'SP', 'NP', 'EP', 'NWP', 'NCP', 'UP', 'SGP'];
 
@@ -159,6 +161,173 @@ const validateRequest = (body, packageCount) => {
 
 const resolveCreatedBy = (user) => {
   return user?.client_id || user?.clientId || user?.userId || user?.sub || 'SYSTEM';
+};
+
+const extractBearerToken = (authorizationHeader) => {
+  if (!authorizationHeader || typeof authorizationHeader !== 'string') {
+    return null;
+  }
+
+  if (!authorizationHeader.startsWith('Bearer ')) {
+    return null;
+  }
+
+  return authorizationHeader.slice(7).trim() || null;
+};
+
+const hashToken = (token) => require('crypto').createHash('sha256').update(token).digest('hex');
+
+const ensureOtpVerified = async (shipmentId, token) => {
+  const tokenHash = hashToken(token);
+  const latest = await db('otp_requests')
+    .where('consignment_id', shipmentId)
+    .where('token_hash', tokenHash)
+    .where('is_verified', true)
+    .orderBy('verified_at', 'desc')
+    .first();
+
+  if (!latest) {
+    return { ok: false, error: 'OTP verification required', code: 'OTP_REQUIRED' };
+  }
+
+  if (latest.verified_at) {
+    const verifiedAt = new Date(latest.verified_at);
+    const expiresAt = new Date(verifiedAt.getTime() + OTP_SESSION_TTL_MINUTES * 60 * 1000);
+    if (Date.now() > expiresAt.getTime()) {
+      return { ok: false, error: 'OTP session expired', code: 'OTP_EXPIRED' };
+    }
+  }
+
+  return { ok: true };
+};
+
+const toIsoDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+};
+
+const toEpochSeconds = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.floor(date.getTime() / 1000);
+};
+
+const toNullableNumber = (value) => {
+  if (value === null || value === undefined) return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+};
+
+const mapPackageDetails = (item) => ({
+  packageId: item.item_id,
+  description: item.description,
+  weight: toNullableNumber(item.weight),
+  height: toNullableNumber(item.height),
+  width: toNullableNumber(item.width),
+  length: toNullableNumber(item.item_length),
+  isPrimary: Boolean(item.is_primary)
+});
+
+const buildCustomerShipmentResponse = (data) => {
+  const consignment = data.consignment;
+  const packages = data.items.map(mapPackageDetails);
+
+  return {
+    messageId: `SHIPMENT-${consignment.consignment_id}`,
+    timestamp: toEpochSeconds(consignment.created_at || consignment.updated_at || consignment.delivery_date),
+    isSingle: packages.length <= 1,
+    shipmentType: consignment.shipment_type || 'NON-DOCUMENT',
+    shipmentId: consignment.consignment_id,
+    deliveryDate: toIsoDate(consignment.delivery_date),
+    serviceType: consignment.service_type,
+    serviceIndicator: consignment.service_indicator || null,
+    preferredDeliveryOption:
+      consignment.preferred_delivery_option ||
+      data.deliveryOptions?.[0]?.preferred_delivery_option ||
+      null,
+    preferredNotificationChannel: consignment.preferred_notification_channel || null,
+    deliveryOptionsUntil: data.deliveryOptionsUntil,
+    packages,
+    receiver: {
+      accountNumber: data.account?.account_number || null,
+      contactName: consignment.receiver_contact_name,
+      mobileNumber: consignment.receiver_mobile_number,
+      emailAddress: consignment.receiver_email,
+      address: {
+        addressLine1: consignment.receiver_address_1,
+        addressLine2: consignment.receiver_address_2,
+        postalCode: consignment.receiver_postcode,
+        city: consignment.receiver_city,
+        suburb: consignment.receiver_suburb,
+        state: consignment.receiver_state,
+        country: consignment.receiver_country
+      }
+    },
+    sender: {
+      contactName: consignment.sender_contact_name,
+      mobileNumber: consignment.sender_mobile_number,
+      emailAddress: consignment.sender_email
+    }
+  };
+};
+
+const buildConsignmentDetailsResponse = async (shipmentId, accessLinkRecord = null) => {
+  const consignment = await db('consignments')
+    .where('consignment_id', shipmentId)
+    .first();
+
+  if (!consignment) {
+    return null;
+  }
+
+  const items = await db('items')
+    .where('consignment_id', consignment.id)
+    .orderBy('id', 'asc');
+
+  const deliveryOptions = await db('delivery_options')
+    .where('consignment_id', consignment.id)
+    .orderBy('id', 'asc');
+
+  const account = consignment.account_id
+    ? await db('accounts').where('id', consignment.account_id).first()
+    : null;
+
+  const accessLink = accessLinkRecord || await db('access_links')
+    .where('consignment_id', shipmentId)
+    .where('status', 'ACTIVE')
+    .orderBy('created_at', 'desc')
+    .first();
+
+  const deliveryDateValue = consignment.delivery_date || accessLink?.delivery_date;
+  const deliveryOptionsUntil = deliveryDateValue
+    ? await calculateDeliveryOptionsUntil(deliveryDateValue)
+    : null;
+
+  return {
+    shipmentId,
+    deliveryOptionsUntil,
+    accessLink: accessLink
+      ? {
+          id: accessLink.id,
+          shipmentId: accessLink.consignment_id,
+          accessUrl: accessLink.access_url,
+          webUrl: accessLink.web_url,
+          urlKey: accessLink.url_key,
+          expiresAt: accessLink.expires_at,
+          deliveryDate: accessLink.delivery_date,
+          status: accessLink.status,
+          createdAt: accessLink.created_at,
+          createdBy: accessLink.created_by
+        }
+      : null,
+    consignment,
+    items,
+    deliveryOptions,
+    account
+  };
 };
 
 exports.createConsignment = async (req, res, next) => {
@@ -331,6 +500,139 @@ exports.createConsignment = async (req, res, next) => {
       success: true,
       data: responseData,
       message: 'Consignment created successfully. Notifications will be sent shortly.'
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.getConsignmentDetails = async (req, res, next) => {
+  try {
+    const { shipmentId } = req.params;
+
+    const token = extractBearerToken(req.headers.authorization) || req.query.token;
+    if (!token) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Access token is required'
+      });
+    }
+
+    const accessLink = await db('access_links')
+      .where('consignment_id', shipmentId)
+      .where('status', 'ACTIVE')
+      .orderBy('created_at', 'desc')
+      .first();
+
+    if (!accessLink) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Access link not found or revoked'
+      });
+    }
+
+    const tokenHash = hashToken(token);
+    if (accessLink.token_hash !== tokenHash) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Access token mismatch'
+      });
+    }
+
+    const data = await buildConsignmentDetailsResponse(shipmentId, accessLink);
+
+    if (!data) {
+      return res.status(StatusCodes.NOT_FOUND).json({
+        success: false,
+        error: 'Consignment not found'
+      });
+    }
+
+    return res.status(StatusCodes.OK).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.getCustomerShipmentDetails = async (req, res, next) => {
+  try {
+    const { shipmentId } = req.params;
+    const token = extractBearerToken(req.headers.authorization);
+
+    if (!token) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Missing or invalid Authorization header',
+        code: 'MISSING_TOKEN'
+      });
+    }
+
+    const otpService = require('../services/otpService');
+    const tokenValidation = await otpService.validateAccessToken(token);
+    if (!tokenValidation.valid) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: tokenValidation.error,
+        code: 'TOKEN_INVALID'
+      });
+    }
+
+    if (tokenValidation.shipmentId !== shipmentId) {
+      return res.status(StatusCodes.BAD_REQUEST).json({
+        success: false,
+        error: 'Shipment ID mismatch',
+        code: 'SHIPMENT_MISMATCH'
+      });
+    }
+
+    const otpStatus = await ensureOtpVerified(shipmentId, token);
+    if (!otpStatus.ok) {
+      return res.status(StatusCodes.FORBIDDEN).json({
+        success: false,
+        error: otpStatus.error,
+        code: otpStatus.code
+      });
+    }
+
+    const accessLink = await db('access_links')
+      .where('consignment_id', shipmentId)
+      .where('status', 'ACTIVE')
+      .orderBy('created_at', 'desc')
+      .first();
+
+    if (!accessLink) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Access link not found or revoked',
+        code: 'ACCESS_LINK_NOT_FOUND'
+      });
+    }
+
+    const tokenHash = hashToken(token);
+    if (accessLink.token_hash !== tokenHash) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        error: 'Access token mismatch',
+        code: 'TOKEN_MISMATCH'
+      });
+    }
+
+    const data = await buildConsignmentDetailsResponse(shipmentId, accessLink);
+
+    if (!data) {
+      return res.status(StatusCodes.NOT_FOUND).json({
+        success: false,
+        error: 'Consignment not found',
+        code: 'NOT_FOUND'
+      });
+    }
+
+    return res.status(StatusCodes.OK).json({
+      success: true,
+      data: buildCustomerShipmentResponse(data)
     });
   } catch (error) {
     return next(error);
